@@ -1,28 +1,26 @@
 
-import fitz 
+import fitz  
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import google.generativeai as genai
 from pymongo import MongoClient
 import os
-from sentence_transformers import SentenceTransformer  
+from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv 
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
 
-
-
-MONGO_URI = os.getenv("MONGO_URI")
+MONGO_URI = os.getenv("MONGO_URI") 
 client = MongoClient(MONGO_URI)
 db = client["rag_database"]  
 collection = db["chunks"]   
 
-#Sentence Transformers model for embeddings
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2') 
+#Load Sentence Transformers model
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 #PDF Processing & Chunking
 def extract_text_from_pdf(pdf_path):
@@ -53,44 +51,46 @@ def store_chunks_in_mongodb(chunks):
         embedding = get_embedding(chunk)
         document = {
             "text": chunk,
-            "embedding": embedding.tolist()
+            "embedding": embedding.tolist()  
         }
         collection.insert_one(document)
 
-#Vector Search for Retrieval
+#Vector Search
 def retrieve_relevant_chunks(question, top_k=3):
-    """Retrieve top-k relevant."""
+    """Retrieve top-k relevant chunks based on cosine similarity."""
     question_embedding = get_embedding(question)
     relevant_chunks = []
     
-    # Fetching of chunks
+    # Fetching chunks
     for doc in collection.find():
         chunk_embedding = np.array(doc["embedding"])
         similarity = cosine_similarity([question_embedding], [chunk_embedding])[0][0]
         relevant_chunks.append((similarity, doc["text"]))
     
-    # Sorting by similarity
+    # Sort by similarity 
     relevant_chunks.sort(reverse=True, key=lambda x: x[0])
     return [chunk for _, chunk in relevant_chunks[:top_k]]
 
-#Generate Answers
+#Generating Answers
 def generate_answer(question, relevant_chunks):
-    """Generate an answer."""
+    """Generate an answer using Gemini's LLM."""
     context = "\n".join(relevant_chunks)
     prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
     
     try:
-        model = genai.GenerativeModel("gemini-1.5-pro-latest") 
+        model = genai.GenerativeModel("gemini-1.5-pro-latest")  
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         print(f"Error generating answer: {e}")
         return "Unable to generate an answer at this time."
 
-#Main Pipeline
-def main(pdf_path, question):
-    """Main pipeline for Q&A system."""
-    #Extract text
+# Initial Setup
+def initial_setup(pdf_path):
+    """Perform the initial setup: Extract text, chunk it, and store embeddings."""
+    print("Performing initial setup...")
+    
+    #Extract text from PDF
     print("Extracting text from PDF...")
     text = extract_text_from_pdf(pdf_path)
     
@@ -98,29 +98,46 @@ def main(pdf_path, question):
     print("Chunking text...")
     chunks = chunk_text(text)
     
-    #Generate embeddings and storing
-    print("Generating embeddings and storing in MongoDB Atlas...")
+    #Generate embeddings and storing in MongoDB
+    print("Generating embeddings and storing in MongoDB...")
     store_chunks_in_mongodb(chunks)
     
-    #Retrieve relevant chunks for the question
+    print("Initial setup complete!")
+
+#Query Handling
+def handle_query(question):
+    """Handle a user query: Retrieve relevant chunks and generate an answer."""
+    print("Handling query...")
+    
+    #Retrieve relevant chunks
     print("Retrieving relevant chunks...")
     relevant_chunks = retrieve_relevant_chunks(question)
     
-    #Genrating the answer
+    #Generating  and display the answer
     print("Generating answer...")
     answer = generate_answer(question, relevant_chunks)
     print("\nAnswer:", answer)
 
-# for Running  the pipeline
-if __name__ == "__main__":
+#Main Method
+def main(pdf_path, question):
+    """Main pipeline for the RAG-based Q&A system."""
     
-    current_directory = os.path.dirname(os.path.abspath(__file__)) 
+    if not collection.count_documents({}):  #Looking if it is empty
+        initial_setup(pdf_path)
+    
+    
+    handle_query(question)
+
+#pipeline
+if __name__ == "__main__":
+    #PDF path dynamically
+    current_directory = os.path.dirname(os.path.abspath(__file__))  
     pdf_folder = "data"  
     pdf_filename = "The_GALE_ENCYCLOPEDIA_of_MEDICINE_SECOND.pdf"  
-    pdf_path = os.path.join(current_directory, pdf_folder, pdf_filename)  
+    pdf_path = os.path.join(current_directory, pdf_folder, pdf_filename) 
     
-    # Quetion Prompt 
-    question = "Symptoms for  cancer?"
+    # Question Prompt
+    question = "How to cure cancer?"
     
-    # Execute the pipeline
+    # Execution
     main(pdf_path, question)
